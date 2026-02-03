@@ -1,6 +1,5 @@
 import streamlit as st
 import pdfplumber, docx, re, json, os
-from spacy.cli import download
 import spacy
 from datetime import datetime
 from reportlab.lib.pagesizes import A4
@@ -13,12 +12,8 @@ if USE_LLM:
     from openai import OpenAI
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-MODEL_NAME = "en_core_web_sm"
-try:
-    nlp = spacy.load(MODEL_NAME)
-except:
-    download(MODEL_NAME)
-    nlp = spacy.load(MODEL_NAME)
+nlp = spacy.load("en_core_web_sm")
+
 
 st.set_page_config(page_title="GenAI Legal Assistant", layout="wide")
 
