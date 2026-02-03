@@ -95,22 +95,21 @@ def extract_entities(text, lang):
     ents = {"PERSON": [], "ORG": [], "DATE": [], "MONEY": [], "LOCATION": []}
 
     if lang == "Hindi":
-        # -------- REGEX-BASED HINDI ENTITY EXTRACTION --------
-        # PERSON (श्री <नाम>)
+        # PERSON: श्री <नाम>
         persons = re.findall(r"श्री\s+[अ-ह]+\s*[अ-ह]*", text)
-        ents["PERSON"].extend(persons)
+        ents["PERSON"] = persons
 
-        # ORG (कंपनी नाम / लिमिटेड)
-        orgs = re.findall(r"[A-Za-zअ-ह]+\s+(प्राइवेट लिमिटेड|लिमिटेड|कंपनी)", text)
-        ents["ORG"].extend(orgs)
+        # ORG: <Name> प्राइवेट लिमिटेड / लिमिटेड / कंपनी
+        orgs = re.findall(r"([A-Za-zअ-ह]+(?:\s+[A-Za-zअ-ह]+)*\s+(?:प्राइवेट लिमिटेड|लिमिटेड|कंपनी))", text)
+        ents["ORG"] = orgs
 
-        # DATE (1 जनवरी 2025)
+        # DATE: 1 जनवरी 2025
         dates = re.findall(r"\d{1,2}\s+[अ-ह]+\s+\d{4}", text)
-        ents["DATE"].extend(dates)
+        ents["DATE"] = dates
 
-        # MONEY (₹50000 or 50000 रुपये)
+        # MONEY: ₹50000 or 50000 रुपये
         money = re.findall(r"₹\s?\d+|\d+\s?रुपये", text)
-        ents["MONEY"].extend(money)
+        ents["MONEY"] = money
 
     else:
         doc = nlp_en(text)
@@ -127,6 +126,7 @@ def extract_entities(text, lang):
                 ents["LOCATION"].append(e.text)
 
     return ents
+
 
 
 # ---------------- RISK KEYWORDS ----------------
