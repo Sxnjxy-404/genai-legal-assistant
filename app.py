@@ -5,13 +5,11 @@ import stanza
 from datetime import datetime
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 # ================= CONFIG =================
-USE_LLM = False  # turn True when billing enabled
-
-if USE_LLM:
-    from openai import OpenAI
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+USE_LLM = False
 
 # ---------------- LOAD NLP MODELS ----------------
 @st.cache_resource
@@ -31,6 +29,7 @@ st.markdown("""
 .risk-high {background-color:#ffcccc;color:black;padding:15px;border-radius:10px;}
 .risk-medium {background-color:#fff3cd;color:black;padding:15px;border-radius:10px;}
 .risk-low {background-color:#d4edda;color:black;padding:15px;border-radius:10px;}
+.ambiguous {border-left:6px solid red;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -39,11 +38,30 @@ st.write("Understand contracts, detect risks, and get safer alternatives.")
 
 # ---------------- CONTRACT TEMPLATES ----------------
 TEMPLATES = {
-    "Employment": "Employee shall work as per company policies.\nSalary paid monthly.\n30 days termination notice.\nConfidentiality required.",
-    "Vendor": "Vendor shall supply goods.\nPayment within 30 days.\nLiability limited.\nDisputes by discussion.",
-    "Lease": "Tenant pays rent monthly.\n11 month lease.\nLegal use only.\n30 days termination.",
-    "Partnership": "Profits shared equally.\nPartners act in good faith.\nArbitration for disputes.",
-    "Service": "Service provider delivers services.\nClient pays invoice.\nConfidentiality applies."
+    "Employment": [
+        "Employee shall work as per company policies.",
+        "Salary shall be paid monthly.",
+        "Either party may terminate with 30 days notice.",
+        "Confidentiality must be maintained."
+    ],
+    "Vendor": [
+        "Vendor shall supply goods as agreed.",
+        "Payment shall be made within 30 days.",
+        "Liability is limited to contract value."
+    ],
+    "Lease": [
+        "Tenant shall pay rent monthly.",
+        "Lease term is 11 months.",
+        "Termination requires 30 days notice."
+    ],
+    "Partnership": [
+        "Partners shall share profits equally.",
+        "Disputes resolved by arbitration."
+    ],
+    "Service": [
+        "Service provider shall deliver services.",
+        "Client shall pay as per invoice."
+    ]
 }
 
 # ---------------- FILE UPLOAD ----------------
@@ -95,66 +113,61 @@ def extract_entities(text, lang):
     ents = {"PERSON": [], "ORG": [], "DATE": [], "MONEY": [], "LOCATION": []}
 
     if lang == "Hindi":
-        # PERSON: श्री <नाम>
-        persons = re.findall(r"श्री\s+[अ-ह]+\s*[अ-ह]*", text)
-        ents["PERSON"] = persons
-
-        # ORG: <Name> प्राइवेट लिमिटेड / लिमिटेड / कंपनी
-        orgs = re.findall(r"([A-Za-zअ-ह]+(?:\s+[A-Za-zअ-ह]+)*\s+(?:प्राइवेट लिमिटेड|लिमिटेड|कंपनी))", text)
-        ents["ORG"] = orgs
-
-        # DATE: 1 जनवरी 2025
-        dates = re.findall(r"\d{1,2}\s+[अ-ह]+\s+\d{4}", text)
-        ents["DATE"] = dates
-
-        # MONEY: ₹50000 or 50000 रुपये
-        money = re.findall(r"₹\s?\d+|\d+\s?रुपये", text)
-        ents["MONEY"] = money
-
+        ents["PERSON"] = re.findall(r"श्री\s+[अ-ह]+\s*[अ-ह]*", text)
+        ents["ORG"] = re.findall(r"([A-Za-zअ-ह]+\s+(?:प्राइवेट लिमिटेड|लिमिटेड|कंपनी))", text)
+        ents["DATE"] = re.findall(r"\d{1,2}\s+[अ-ह]+\s+\d{4}", text)
+        ents["MONEY"] = re.findall(r"₹\s?\d+|\d+\s?रुपये", text)
     else:
         doc = nlp_en(text)
         for e in doc.ents:
-            if e.label_ == "PERSON":
-                ents["PERSON"].append(e.text)
-            elif e.label_ == "ORG":
-                ents["ORG"].append(e.text)
-            elif e.label_ == "DATE":
-                ents["DATE"].append(e.text)
-            elif e.label_ == "MONEY":
-                ents["MONEY"].append(e.text)
-            elif e.label_ in ["GPE", "LOC"]:
-                ents["LOCATION"].append(e.text)
+            if e.label_ == "PERSON": ents["PERSON"].append(e.text)
+            elif e.label_ == "ORG": ents["ORG"].append(e.text)
+            elif e.label_ == "DATE": ents["DATE"].append(e.text)
+            elif e.label_ == "MONEY": ents["MONEY"].append(e.text)
+            elif e.label_ in ["GPE","LOC"]: ents["LOCATION"].append(e.text)
 
     return ents
 
+# ---------------- CLAUSE CATEGORY ----------------
+CLAUSE_TYPES = {
+    "Termination": ["terminate","termination","समाप्त"],
+    "Jurisdiction": ["jurisdiction","क्षेत्राधिकार"],
+    "NDA": ["confidential","गोपनीयता"],
+    "Lock-in": ["lock-in","auto-renew","नवीकरण"],
+    "Indemnity": ["indemnify","क्षतिपूर्ति"],
+    "Non-Compete": ["non-compete","प्रतिस्पर्धा"],
+    "IP": ["intellectual property","बौद्धिक संपदा"]
+}
 
+def detect_clause_category(clause):
+    for cat, words in CLAUSE_TYPES.items():
+        for w in words:
+            if w.lower() in clause.lower():
+                return cat
+    return "General"
+
+# ---------------- AMBIGUITY ----------------
+AMBIGUOUS_WORDS = ["reasonable","as per","may be","समय समय पर","उचित"]
+
+def is_ambiguous(clause):
+    for w in AMBIGUOUS_WORDS:
+        if w in clause.lower():
+            return True
+    return False
 
 # ---------------- RISK KEYWORDS ----------------
-HIGH_EN = ["indemnify", "penalty", "terminate", "liability", "damages"]
-MEDIUM_EN = ["arbitration", "jurisdiction", "lock-in"]
-LOW_EN = ["payment", "notice", "confidentiality"]
+HIGH = ["indemnify","penalty","terminate","liability","damages","non-compete","intellectual property"]
+MEDIUM = ["arbitration","jurisdiction","lock-in","auto-renew"]
+LOW = ["payment","notice","confidentiality"]
 
-HIGH_HI = ["क्षतिपूर्ति", "दंड", "समाप्त", "उत्तरदायित्व"]
-MEDIUM_HI = ["मध्यस्थता", "क्षेत्राधिकार"]
-LOW_HI = ["भुगतान", "सूचना", "गोपनीयता"]
-
-# ---------------- RISK ENGINE ----------------
-def risk_score(clause, lang):
+def risk_score(clause):
     t = clause.lower()
-    if lang == "Hindi":
-        for w in HIGH_HI:
-            if w in t: return "High"
-        for w in MEDIUM_HI:
-            if w in t: return "Medium"
-        for w in LOW_HI:
-            if w in t: return "Low"
-    else:
-        for w in HIGH_EN:
-            if w in t: return "High"
-        for w in MEDIUM_EN:
-            if w in t: return "Medium"
-        for w in LOW_EN:
-            if w in t: return "Low"
+    for w in HIGH:
+        if w in t: return "High"
+    for w in MEDIUM:
+        if w in t: return "Medium"
+    for w in LOW:
+        if w in t: return "Low"
     return "Low"
 
 def obligation_type(clause):
@@ -163,6 +176,25 @@ def obligation_type(clause):
     if "shall" in c or "must" in c or "करेगा" in c: return "Obligation"
     if "may" in c or "सकता है" in c: return "Right"
     return "Neutral"
+
+# ---------------- SIMILARITY ----------------
+def match_template_clause(clause, template_clauses):
+    vect = TfidfVectorizer().fit_transform([clause] + template_clauses)
+    sim = cosine_similarity(vect[0:1], vect[1:]).flatten()
+    idx = sim.argmax()
+    if sim[idx] > 0.4:
+        return template_clauses[idx]
+    return None
+
+# ---------------- SUGGESTIONS ----------------
+def suggestion(risk, category):
+    if risk == "High":
+        return "Consider limiting liability or adding notice period."
+    if category == "Termination":
+        return "Add mutual termination and notice period."
+    if category == "Non-Compete":
+        return "Limit duration and scope of non-compete."
+    return "Clause acceptable."
 
 # ---------------- PDF EXPORT ----------------
 def export_pdf(report):
@@ -178,12 +210,10 @@ def export_pdf(report):
 # ---------------- MAIN ----------------
 if uploaded_file:
     text = extract_text(uploaded_file)
-
     lang = detect_language(text)
     st.subheader(f"🌐 Detected Language: {lang}")
 
     clauses = get_clauses(text, lang)
-
     contract_type = classify_contract(text)
     st.subheader(f"📂 Detected Contract Type: {contract_type}")
 
@@ -197,8 +227,10 @@ if uploaded_file:
     st.subheader("📑 Clause Analysis")
 
     for i, cl in enumerate(clauses):
-        r = risk_score(cl, lang)
+        r = risk_score(cl)
         o = obligation_type(cl)
+        cat = detect_clause_category(cl)
+        amb = is_ambiguous(cl)
 
         css = "risk-low"
         if r == "High":
@@ -208,12 +240,24 @@ if uploaded_file:
             css = "risk-medium"
             med += 1
 
+        if amb:
+            css += " ambiguous"
+
+        template_match = match_template_clause(cl, TEMPLATES.get(contract_type, []))
+        sug = suggestion(r, cat)
+
         st.markdown(
-            f"<div class='{css}'><b>Clause {i+1} - {r} Risk</b><br><br>{cl}<br><br><b>Type:</b> {o}</div>",
+            f"<div class='{css}'><b>Clause {i+1} - {r} Risk</b>"
+            f"<br><b>Category:</b> {cat}"
+            f"<br><b>Type:</b> {o}"
+            f"<br><b>Ambiguous:</b> {amb}"
+            f"<br><br>{cl}"
+            f"<br><b>Matched Template:</b> {template_match}"
+            f"<br><b>Suggestion:</b> {sug}</div>",
             unsafe_allow_html=True
         )
 
-        audit["clauses"].append({"clause": cl, "risk": r, "type": o})
+        audit["clauses"].append({"clause": cl, "risk": r, "type": o, "category": cat, "ambiguous": amb})
         st.divider()
 
     st.subheader("📊 Contract Risk")
@@ -224,9 +268,14 @@ if uploaded_file:
     else:
         st.success("Overall Risk: LOW")
 
-    summary = "Summary not generated (AI disabled)."
+    summary = f"""
+Contract Type: {contract_type}
+High Risk Clauses: {high}
+Medium Risk Clauses: {med}
+Total Clauses: {len(clauses)}
+"""
     st.subheader("📝 Summary Report")
-    st.write(summary)
+    st.text(summary)
 
     with open("audit_log.json","w") as f:
         json.dump(audit,f,indent=2)
@@ -237,4 +286,4 @@ if uploaded_file:
 
     st.subheader("📄 SME-Friendly Contract Templates")
     temp_choice = st.selectbox("Choose Template", list(TEMPLATES.keys()))
-    st.text_area("Template Preview", TEMPLATES[temp_choice], height=200)
+    st.text_area("Template Preview", "\n".join(TEMPLATES[temp_choice]), height=200)
