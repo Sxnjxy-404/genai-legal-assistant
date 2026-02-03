@@ -9,7 +9,11 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 # ================= CONFIG =================
-USE_LLM = False
+USE_LLM = False   # 🔁 turn True when you add API key
+
+if USE_LLM:
+    from openai import OpenAI
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ---------------- LOAD NLP MODELS ----------------
 @st.cache_resource
@@ -64,7 +68,6 @@ TEMPLATES = {
     ]
 }
 
-# ---------------- FILE UPLOAD ----------------
 uploaded_file = st.file_uploader("Upload Contract", type=["pdf", "docx", "txt"])
 
 # ---------------- TEXT EXTRACTION ----------------
@@ -128,34 +131,13 @@ def extract_entities(text, lang):
 
     return ents
 
-# ---------------- CLAUSE CATEGORY ----------------
-CLAUSE_TYPES = {
-    "Termination": ["terminate","termination","समाप्त"],
-    "Jurisdiction": ["jurisdiction","क्षेत्राधिकार"],
-    "NDA": ["confidential","गोपनीयता"],
-    "Lock-in": ["lock-in","auto-renew","नवीकरण"],
-    "Indemnity": ["indemnify","क्षतिपूर्ति"],
-    "Non-Compete": ["non-compete","प्रतिस्पर्धा"],
-    "IP": ["intellectual property","बौद्धिक संपदा"]
-}
-
-def detect_clause_category(clause):
-    for cat, words in CLAUSE_TYPES.items():
-        for w in words:
-            if w.lower() in clause.lower():
-                return cat
-    return "General"
-
 # ---------------- AMBIGUITY ----------------
-AMBIGUOUS_WORDS = ["reasonable","as per","may be","समय समय पर","उचित"]
+AMBIGUOUS_WORDS = ["reasonable","as per","may be","उचित","समय समय पर"]
 
 def is_ambiguous(clause):
-    for w in AMBIGUOUS_WORDS:
-        if w in clause.lower():
-            return True
-    return False
+    return any(w in clause.lower() for w in AMBIGUOUS_WORDS)
 
-# ---------------- RISK KEYWORDS ----------------
+# ---------------- RISK ----------------
 HIGH = ["indemnify","penalty","terminate","liability","damages","non-compete","intellectual property"]
 MEDIUM = ["arbitration","jurisdiction","lock-in","auto-renew"]
 LOW = ["payment","notice","confidentiality"]
@@ -177,24 +159,26 @@ def obligation_type(clause):
     if "may" in c or "सकता है" in c: return "Right"
     return "Neutral"
 
-# ---------------- SIMILARITY ----------------
-def match_template_clause(clause, template_clauses):
-    vect = TfidfVectorizer().fit_transform([clause] + template_clauses)
-    sim = cosine_similarity(vect[0:1], vect[1:]).flatten()
-    idx = sim.argmax()
-    if sim[idx] > 0.4:
-        return template_clauses[idx]
-    return None
+# ---------------- LLM FUNCTIONS ----------------
+def llm_summarize(text):
+    if not USE_LLM:
+        return "LLM disabled. Showing rule-based summary."
+    prompt = f"Summarize this contract in simple business English:\n{text}"
+    res = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role":"user","content":prompt}]
+    )
+    return res.choices[0].message.content
 
-# ---------------- SUGGESTIONS ----------------
-def suggestion(risk, category):
-    if risk == "High":
-        return "Consider limiting liability or adding notice period."
-    if category == "Termination":
-        return "Add mutual termination and notice period."
-    if category == "Non-Compete":
-        return "Limit duration and scope of non-compete."
-    return "Clause acceptable."
+def llm_suggest(clause):
+    if not USE_LLM:
+        return "Consider renegotiating this clause."
+    prompt = f"Suggest safer alternative for this contract clause:\n{clause}"
+    res = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role":"user","content":prompt}]
+    )
+    return res.choices[0].message.content
 
 # ---------------- PDF EXPORT ----------------
 def export_pdf(report):
@@ -206,6 +190,10 @@ def export_pdf(report):
     c.drawText(t)
     c.save()
     return file
+
+# ---------------- SESSION STATE ----------------
+if "pdf_path" not in st.session_state:
+    st.session_state.pdf_path = None
 
 # ---------------- MAIN ----------------
 if uploaded_file:
@@ -221,15 +209,12 @@ if uploaded_file:
     st.subheader("📌 Extracted Entities")
     st.json(ents)
 
-    audit = {"time": str(datetime.now()), "language": lang, "contract_type": contract_type, "clauses": []}
-
-    high, med = 0, 0
+    high = 0
     st.subheader("📑 Clause Analysis")
 
     for i, cl in enumerate(clauses):
         r = risk_score(cl)
         o = obligation_type(cl)
-        cat = detect_clause_category(cl)
         amb = is_ambiguous(cl)
 
         css = "risk-low"
@@ -238,59 +223,40 @@ if uploaded_file:
             high += 1
         elif r == "Medium":
             css = "risk-medium"
-            med += 1
 
         if amb:
             css += " ambiguous"
 
-        template_match = match_template_clause(cl, TEMPLATES.get(contract_type, []))
-        sug = suggestion(r, cat)
+        sug = llm_suggest(cl) if r=="High" else "Clause acceptable."
 
         st.markdown(
-            f"<div class='{css}'><b>Clause {i+1} - {r} Risk</b>"
-            f"<br><b>Category:</b> {cat}"
+            f"<div class='{css}'><b>Clause {i+1} - {r}</b>"
             f"<br><b>Type:</b> {o}"
             f"<br><b>Ambiguous:</b> {amb}"
             f"<br><br>{cl}"
-            f"<br><b>Matched Template:</b> {template_match}"
             f"<br><b>Suggestion:</b> {sug}</div>",
             unsafe_allow_html=True
         )
-
-        audit["clauses"].append({"clause": cl, "risk": r, "type": o, "category": cat, "ambiguous": amb})
         st.divider()
 
     st.subheader("📊 Contract Risk")
     if high > 2:
         st.error("Overall Risk: HIGH")
-    elif med > 2:
-        st.warning("Overall Risk: MEDIUM")
     else:
         st.success("Overall Risk: LOW")
 
-    summary = f"""
-Contract Type: {contract_type}
-High Risk Clauses: {high}
-Medium Risk Clauses: {med}
-Total Clauses: {len(clauses)}
-"""
-    st.subheader("📝 Summary Report")
-    st.text(summary)
+    summary = llm_summarize(text)
 
-    with open("audit_log.json","w") as f:
-        json.dump(audit,f,indent=2)
+    st.subheader("📝 Summary Report")
+    st.write(summary)
 
     if st.button("Export PDF"):
-        pdf = export_pdf(summary)
-        with open(pdf, "rb") as f:
-            st.download_button(
-                label="⬇️ Download PDF",
-                data=f,
-                file_name="contract_report.pdf",
-                mime="application/pdf"
-            )
+        st.session_state.pdf_path = export_pdf(summary)
+        st.success("PDF generated!")
 
-
+    if st.session_state.pdf_path:
+        with open(st.session_state.pdf_path, "rb") as f:
+            st.download_button("⬇️ Download PDF", f, "contract_report.pdf", "application/pdf")
 
     st.subheader("📄 SME-Friendly Contract Templates")
     temp_choice = st.selectbox("Choose Template", list(TEMPLATES.keys()))
