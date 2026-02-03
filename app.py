@@ -12,12 +12,13 @@ if USE_LLM:
     from openai import OpenAI
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+MODEL_NAME = "en_core_web_sm"
+
 try:
-    nlp = spacy.load("en_core_web_sm")
+    nlp = spacy.load(MODEL_NAME)
 except:
-    import subprocess
-    subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
-    nlp = spacy.load("en_core_web_sm")
+    download(MODEL_NAME)
+    nlp = spacy.load(MODEL_NAME)
 
 st.set_page_config(page_title="GenAI Legal Assistant", layout="wide")
 
