@@ -284,11 +284,12 @@ Total Clauses: {len(clauses)}
         pdf = export_pdf(summary)
         with open(pdf, "rb") as f:
             st.download_button(
-                label="Download PDF",
+                label="⬇️ Download PDF",
                 data=f,
                 file_name="contract_report.pdf",
                 mime="application/pdf"
-                )
+            )
+
 
 
     st.subheader("📄 SME-Friendly Contract Templates")
