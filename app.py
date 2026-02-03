@@ -161,25 +161,41 @@ def obligation_type(clause):
     return "Neutral"
 
 # ---------------- LLM ----------------
-def llm_summarize(text, contract_type, high, medium, total):
-    if not USE_LLM:
-        return f"""
+def llm_summarize(text, ents, contract_type, high_count, amb_count):
+    # -------- RULE BASED SUMMARY --------
+    base_summary = f"""
 Contract Type: {contract_type}
-Total Clauses: {total}
-High Risk Clauses: {high}
-Medium Risk Clauses: {medium}
 
-Key Risks:
-- Review high-risk clauses carefully.
-- Ensure termination and liability terms are fair.
-- Check confidentiality and payment clauses.
+Parties: {", ".join(ents["PERSON"][:3]) if ents["PERSON"] else "Not clearly mentioned"}
+
+Organizations: {", ".join(ents["ORG"][:3]) if ents["ORG"] else "Not clearly mentioned"}
+
+Dates: {", ".join(ents["DATE"][:2]) if ents["DATE"] else "Not mentioned"}
+
+Amounts: {", ".join(ents["MONEY"][:2]) if ents["MONEY"] else "Not mentioned"}
+
+High Risk Clauses: {high_count}
+
+Ambiguous Clauses: {amb_count}
+
+This contract contains obligations and potential risk areas related to termination, liability, and jurisdiction.
 """
-    prompt = f"Summarize this contract in simple business English:\n{text}"
+
+    if not USE_LLM:
+        return base_summary.strip()
+
+    # -------- LLM SUMMARY --------
+    prompt = f"""
+Summarize this contract in simple business English:
+
+{text[:3000]}
+"""
     res = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role":"user","content":prompt}]
+        messages=[{"role": "user", "content": prompt}]
     )
     return res.choices[0].message.content
+
 
 def llm_suggest(clause):
     if not USE_LLM:
@@ -255,9 +271,18 @@ if uploaded_file:
     else:
         st.success("Overall Risk: LOW")
 
-    summary = llm_summarize(text, contract_type, high, 0, len(clauses))
+    amb_count = sum(is_ambiguous(c) for c in clauses)
+
+    summary = llm_summarize(
+        text=text,
+        ents=ents,
+        contract_type=contract_type,
+        high_count=high,
+        amb_count=amb_count
+        )
     st.subheader("📝 Summary Report")
-    st.write(summary)
+    st.text(summary)
+
 
     if st.button("Export PDF"):
         st.session_state.pdf_path = export_pdf(summary)
