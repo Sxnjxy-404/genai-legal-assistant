@@ -1,14 +1,38 @@
-1. Termination Clause:
-The company may terminate this agreement at any time without prior notice.
+SERVICE AGREEMENT
 
-2. Liability Clause:
-The user shall indemnify and hold harmless the company from any damages.
+This Agreement is made on 1 January 2025 between ABC Technologies Pvt Ltd and Mr. Ramesh Kumar.
 
-3. Payment Terms:
-The client shall pay ₹10,000 per month within 30 days.
+1. Services:
+The Service Provider shall deliver software development services as per company requirements.
 
-4. Governing Law:
-This contract shall be governed by the laws of India.
+2. Payment:
+The Client shall pay INR 50000 per month for the services.
 
-5. Confidentiality:
-Both parties agree to maintain confidentiality of all shared data.
+3. Confidentiality (NDA):
+The Service Provider shall keep all company data confidential and shall not disclose it to any third party.
+
+4. Intellectual Property:
+All intellectual property created during the project shall belong exclusively to ABC Technologies Pvt Ltd.
+
+5. Non-Compete:
+The Service Provider shall not work with any competitor for a period of 2 years after termination of this contract.
+
+6. Termination:
+The Client may terminate this agreement at any time without prior notice.
+
+7. Lock-in Period and Auto-Renewal:
+This contract shall have a lock-in period of 1 year and shall auto-renew every year unless terminated.
+
+8. Indemnity:
+The Service Provider shall indemnify the Client against any damages or losses.
+
+9. Penalty:
+A penalty of INR 20000 shall be imposed for breach of contract.
+
+10. Jurisdiction:
+Any dispute shall be subject to the jurisdiction of Chennai courts.
+
+11. Ambiguous Clause:
+The Service Provider shall perform duties in a reasonable manner as per company expectations.
+
+Signed at Chennai.
