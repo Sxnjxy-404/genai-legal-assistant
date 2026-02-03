@@ -2,7 +2,6 @@ import streamlit as st
 import pdfplumber, docx, re, json, os
 import spacy
 import stanza
-from langdetect import detect
 from datetime import datetime
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -14,39 +13,24 @@ if USE_LLM:
     from openai import OpenAI
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# -------- Load NLP Models --------
-nlp_en = spacy.load("en_core_web_sm")
+# ---------------- LOAD NLP MODELS ----------------
+@st.cache_resource
+def load_models():
+    nlp_en = spacy.load("en_core_web_sm")
+    stanza.download("hi")
+    nlp_hi = stanza.Pipeline("hi", processors="tokenize,ner")
+    return nlp_en, nlp_hi
 
-# Download & load Hindi model (first run only)
-stanza.download("hi")
-nlp_hi = stanza.Pipeline("hi")
+nlp_en, nlp_hi = load_models()
 
 st.set_page_config(page_title="GenAI Legal Assistant", layout="wide")
 
 # ---------------- CSS ----------------
 st.markdown("""
 <style>
-.risk-high {
-    background-color:#ffcccc;
-    color:#000000;
-    padding:15px;
-    border-radius:10px;
-    font-size:16px;
-}
-.risk-medium {
-    background-color:#fff3cd;
-    color:#000000;
-    padding:15px;
-    border-radius:10px;
-    font-size:16px;
-}
-.risk-low {
-    background-color:#d4edda;
-    color:#000000;
-    padding:15px;
-    border-radius:10px;
-    font-size:16px;
-}
+.risk-high {background-color:#ffcccc;color:black;padding:15px;border-radius:10px;}
+.risk-medium {background-color:#fff3cd;color:black;padding:15px;border-radius:10px;}
+.risk-low {background-color:#d4edda;color:black;padding:15px;border-radius:10px;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -55,36 +39,11 @@ st.write("Understand contracts, detect risks, and get safer alternatives.")
 
 # ---------------- CONTRACT TEMPLATES ----------------
 TEMPLATES = {
-    "Employment": """EMPLOYMENT AGREEMENT TEMPLATE
-1. Employee shall work as per company policies.
-2. Salary shall be paid monthly.
-3. Either party may terminate with 30 days notice.
-4. Confidentiality must be maintained.
-""",
-    "Vendor": """VENDOR AGREEMENT TEMPLATE
-1. Vendor shall supply goods as agreed.
-2. Payment shall be made within 30 days.
-3. Liability is limited to contract value.
-4. Disputes resolved by mutual discussion.
-""",
-    "Lease": """LEASE AGREEMENT TEMPLATE
-1. Tenant shall pay rent monthly.
-2. Lease term is 11 months.
-3. Property must be used legally.
-4. Termination requires 30 days notice.
-""",
-    "Partnership": """PARTNERSHIP DEED TEMPLATE
-1. Partners shall share profits equally.
-2. All partners must act in good faith.
-3. Disputes resolved by arbitration.
-4. Partnership may dissolve mutually.
-""",
-    "Service": """SERVICE CONTRACT TEMPLATE
-1. Service provider shall deliver agreed services.
-2. Client shall pay as per invoice.
-3. Confidentiality must be maintained.
-4. Termination with prior notice.
-"""
+    "Employment": "Employee shall work as per company policies.\nSalary paid monthly.\n30 days termination notice.\nConfidentiality required.",
+    "Vendor": "Vendor shall supply goods.\nPayment within 30 days.\nLiability limited.\nDisputes by discussion.",
+    "Lease": "Tenant pays rent monthly.\n11 month lease.\nLegal use only.\n30 days termination.",
+    "Partnership": "Profits shared equally.\nPartners act in good faith.\nArbitration for disputes.",
+    "Service": "Service provider delivers services.\nClient pays invoice.\nConfidentiality applies."
 }
 
 # ---------------- FILE UPLOAD ----------------
@@ -106,68 +65,64 @@ def extract_text(file):
         text = file.read().decode("utf-8")
     return text
 
-# ---------------- LANGUAGE + CLAUSE SPLIT ----------------
-def get_clauses(text):
-    try:
-        lang = detect(text)
-    except:
-        lang = "en"
+# ---------------- LANGUAGE DETECTION ----------------
+def detect_language(text):
+    if re.search(r"[अ-ह]", text):
+        return "Hindi"
+    return "English"
 
-    if lang == "hi":
-        doc = nlp_hi(text)
-        clauses = [sent.text for sent in doc.sentences]
-        return clauses, "Hindi"
-    else:
-        doc = nlp_en(text)
-        clauses = [sent.text for sent in doc.sents]
-        return clauses, "English"
-
-# ---------------- CONTRACT TYPE CLASSIFIER ----------------
-def classify_contract(text):
-    t = text.lower()
-    if "employee" in t or "salary" in t:
-        return "Employment"
-    if "vendor" in t or "supply" in t:
-        return "Vendor"
-    if "rent" in t or "lease" in t:
-        return "Lease"
-    if "partner" in t or "partnership" in t:
-        return "Partnership"
-    if "service" in t:
-        return "Service"
-    return "General"
-
-# ---------------- NER (English only) ----------------
-def extract_entities(text, lang):
+# ---------------- CLAUSE SPLIT ----------------
+def get_clauses(text, lang):
     if lang == "Hindi":
         doc = nlp_hi(text)
-        ents = {"PERSON": [], "ORG": [], "DATE": [], "MONEY": [], "LOCATION": []}
-        for sent in doc.sentences:
-            for ent in sent.ents:
-                if ent.type in ents:
-                    ents[ent.type].append(ent.text)
-        return ents
+        return [s.text for s in doc.sentences]
     else:
         doc = nlp_en(text)
-        ents = {"PARTY": [], "DATE": [], "MONEY": [], "GPE": []}
+        return [s.text for s in doc.sents]
+
+# ---------------- CONTRACT TYPE ----------------
+def classify_contract(text):
+    t = text.lower()
+    if "employee" in t or "salary" in t: return "Employment"
+    if "vendor" in t or "supply" in t: return "Vendor"
+    if "rent" in t or "lease" in t: return "Lease"
+    if "partner" in t: return "Partnership"
+    if "service" in t: return "Service"
+    return "General"
+
+# ---------------- ENTITY EXTRACTION ----------------
+def extract_entities(text, lang):
+    ents = {"PERSON": [], "ORG": [], "DATE": [], "MONEY": [], "LOCATION": []}
+
+    if lang == "Hindi":
+        doc = nlp_hi(text)
+        for sent in doc.sentences:
+            for e in sent.ents:
+                if e.type in ents:
+                    ents[e.type].append(e.text)
+    else:
+        doc = nlp_en(text)
         for e in doc.ents:
-            if e.label_ in ["ORG", "PERSON"]:
-                ents["PARTY"].append(e.text)
+            if e.label_ == "PERSON":
+                ents["PERSON"].append(e.text)
+            elif e.label_ == "ORG":
+                ents["ORG"].append(e.text)
             elif e.label_ == "DATE":
                 ents["DATE"].append(e.text)
             elif e.label_ == "MONEY":
                 ents["MONEY"].append(e.text)
-            elif e.label_ == "GPE":
-                ents["GPE"].append(e.text)
-        return ents
+            elif e.label_ in ["GPE", "LOC"]:
+                ents["LOCATION"].append(e.text)
+
+    return ents
 
 # ---------------- RISK KEYWORDS ----------------
-HIGH_EN = ["indemnify", "penalty", "terminate", "non-compete", "liability", "damages"]
-MEDIUM_EN = ["arbitration", "jurisdiction", "auto-renewal", "lock-in", "governing law"]
+HIGH_EN = ["indemnify", "penalty", "terminate", "liability", "damages"]
+MEDIUM_EN = ["arbitration", "jurisdiction", "lock-in"]
 LOW_EN = ["payment", "notice", "confidentiality"]
 
-HIGH_HI = ["क्षतिपूर्ति", "दंड", "जुर्माना", "समाप्त", "उत्तरदायित्व"]
-MEDIUM_HI = ["मध्यस्थता", "क्षेत्राधिकार", "नवीकरण", "कानून"]
+HIGH_HI = ["क्षतिपूर्ति", "दंड", "समाप्त", "उत्तरदायित्व"]
+MEDIUM_HI = ["मध्यस्थता", "क्षेत्राधिकार"]
 LOW_HI = ["भुगतान", "सूचना", "गोपनीयता"]
 
 # ---------------- RISK ENGINE ----------------
@@ -211,8 +166,10 @@ def export_pdf(report):
 if uploaded_file:
     text = extract_text(uploaded_file)
 
-    clauses, lang = get_clauses(text)
+    lang = detect_language(text)
     st.subheader(f"🌐 Detected Language: {lang}")
+
+    clauses = get_clauses(text, lang)
 
     contract_type = classify_contract(text)
     st.subheader(f"📂 Detected Contract Type: {contract_type}")
