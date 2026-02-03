@@ -95,11 +95,23 @@ def extract_entities(text, lang):
     ents = {"PERSON": [], "ORG": [], "DATE": [], "MONEY": [], "LOCATION": []}
 
     if lang == "Hindi":
-        doc = nlp_hi(text)
-        for sent in doc.sentences:
-            for e in sent.ents:
-                if e.type in ents:
-                    ents[e.type].append(e.text)
+        # -------- REGEX-BASED HINDI ENTITY EXTRACTION --------
+        # PERSON (श्री <नाम>)
+        persons = re.findall(r"श्री\s+[अ-ह]+\s*[अ-ह]*", text)
+        ents["PERSON"].extend(persons)
+
+        # ORG (कंपनी नाम / लिमिटेड)
+        orgs = re.findall(r"[A-Za-zअ-ह]+\s+(प्राइवेट लिमिटेड|लिमिटेड|कंपनी)", text)
+        ents["ORG"].extend(orgs)
+
+        # DATE (1 जनवरी 2025)
+        dates = re.findall(r"\d{1,2}\s+[अ-ह]+\s+\d{4}", text)
+        ents["DATE"].extend(dates)
+
+        # MONEY (₹50000 or 50000 रुपये)
+        money = re.findall(r"₹\s?\d+|\d+\s?रुपये", text)
+        ents["MONEY"].extend(money)
+
     else:
         doc = nlp_en(text)
         for e in doc.ents:
@@ -115,6 +127,7 @@ def extract_entities(text, lang):
                 ents["LOCATION"].append(e.text)
 
     return ents
+
 
 # ---------------- RISK KEYWORDS ----------------
 HIGH_EN = ["indemnify", "penalty", "terminate", "liability", "damages"]
