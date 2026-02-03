@@ -45,11 +45,32 @@ TEMPLATES = {
         "Either party may terminate with 30 days notice.",
         "Confidentiality must be maintained."
     ],
+    "Vendor": [
+        "Vendor shall supply goods as agreed.",
+        "Payment shall be made within 30 days.",
+        "Liability is limited to contract value.",
+        "Disputes resolved by mutual discussion."
+    ],
+    "Lease": [
+        "Tenant shall pay rent monthly.",
+        "Lease term is 11 months.",
+        "Property must be used legally.",
+        "Termination requires 30 days notice."
+    ],
+    "Partnership": [
+        "Partners shall share profits equally.",
+        "All partners must act in good faith.",
+        "Disputes resolved by arbitration.",
+        "Partnership may dissolve mutually."
+    ],
     "Service": [
-        "Service provider shall deliver services.",
-        "Client shall pay as per invoice."
+        "Service provider shall deliver agreed services.",
+        "Client shall pay as per invoice.",
+        "Confidentiality must be maintained.",
+        "Termination with prior notice."
     ]
 }
+
 
 uploaded_file = st.file_uploader("Upload Contract", type=["pdf", "docx", "txt"])
 
@@ -140,9 +161,19 @@ def obligation_type(clause):
     return "Neutral"
 
 # ---------------- LLM ----------------
-def llm_summarize(text):
+def llm_summarize(text, contract_type, high, medium, total):
     if not USE_LLM:
-        return "LLM disabled. Showing rule-based summary."
+        return f"""
+Contract Type: {contract_type}
+Total Clauses: {total}
+High Risk Clauses: {high}
+Medium Risk Clauses: {medium}
+
+Key Risks:
+- Review high-risk clauses carefully.
+- Ensure termination and liability terms are fair.
+- Check confidentiality and payment clauses.
+"""
     prompt = f"Summarize this contract in simple business English:\n{text}"
     res = client.chat.completions.create(
         model="gpt-4o-mini",
@@ -224,7 +255,7 @@ if uploaded_file:
     else:
         st.success("Overall Risk: LOW")
 
-    summary = llm_summarize(text)
+    summary = llm_summarize(text, contract_type, high, 0, len(clauses))
     st.subheader("📝 Summary Report")
     st.write(summary)
 
