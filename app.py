@@ -5,11 +5,9 @@ import stanza
 from datetime import datetime
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 
 # ================= CONFIG =================
-USE_LLM = False   # 🔁 turn True when you add API key
+USE_LLM = False   # turn True when you add API key
 
 if USE_LLM:
     from openai import OpenAI
@@ -38,7 +36,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("⚖️ GenAI Legal Assistant for SMEs")
-st.write("Understand contracts, detect risks, and get safer alternatives.")
 
 # ---------------- CONTRACT TEMPLATES ----------------
 TEMPLATES = {
@@ -47,20 +44,6 @@ TEMPLATES = {
         "Salary shall be paid monthly.",
         "Either party may terminate with 30 days notice.",
         "Confidentiality must be maintained."
-    ],
-    "Vendor": [
-        "Vendor shall supply goods as agreed.",
-        "Payment shall be made within 30 days.",
-        "Liability is limited to contract value."
-    ],
-    "Lease": [
-        "Tenant shall pay rent monthly.",
-        "Lease term is 11 months.",
-        "Termination requires 30 days notice."
-    ],
-    "Partnership": [
-        "Partners shall share profits equally.",
-        "Disputes resolved by arbitration."
     ],
     "Service": [
         "Service provider shall deliver services.",
@@ -72,19 +55,18 @@ uploaded_file = st.file_uploader("Upload Contract", type=["pdf", "docx", "txt"])
 
 # ---------------- TEXT EXTRACTION ----------------
 def extract_text(file):
-    text = ""
     if file.type == "application/pdf":
+        text = ""
         with pdfplumber.open(file) as pdf:
             for p in pdf.pages:
                 if p.extract_text():
                     text += p.extract_text() + "\n"
+        return text
     elif "word" in file.type:
         d = docx.Document(file)
-        for para in d.paragraphs:
-            text += para.text + "\n"
+        return "\n".join(p.text for p in d.paragraphs)
     else:
-        text = file.read().decode("utf-8")
-    return text
+        return file.read().decode("utf-8")
 
 # ---------------- LANGUAGE DETECTION ----------------
 def detect_language(text):
@@ -96,25 +78,24 @@ def detect_language(text):
 def get_clauses(text, lang):
     if lang == "Hindi":
         doc = nlp_hi(text)
-        return [s.text for s in doc.sentences]
+        clauses = [s.text.strip() for s in doc.sentences if s.text.strip()]
+        if not clauses:
+            clauses = re.split(r"[।\n]", text)
+        return clauses
     else:
         doc = nlp_en(text)
-        return [s.text for s in doc.sents]
+        return [s.text.strip() for s in doc.sents if s.text.strip()]
 
 # ---------------- CONTRACT TYPE ----------------
 def classify_contract(text):
     t = text.lower()
-    if "employee" in t or "salary" in t: return "Employment"
-    if "vendor" in t or "supply" in t: return "Vendor"
-    if "rent" in t or "lease" in t: return "Lease"
-    if "partner" in t: return "Partnership"
+    if "employee" in t: return "Employment"
     if "service" in t: return "Service"
     return "General"
 
 # ---------------- ENTITY EXTRACTION ----------------
 def extract_entities(text, lang):
     ents = {"PERSON": [], "ORG": [], "DATE": [], "MONEY": [], "LOCATION": []}
-
     if lang == "Hindi":
         ents["PERSON"] = re.findall(r"श्री\s+[अ-ह]+\s*[अ-ह]*", text)
         ents["ORG"] = re.findall(r"([A-Za-zअ-ह]+\s+(?:प्राइवेट लिमिटेड|लिमिटेड|कंपनी))", text)
@@ -128,19 +109,18 @@ def extract_entities(text, lang):
             elif e.label_ == "DATE": ents["DATE"].append(e.text)
             elif e.label_ == "MONEY": ents["MONEY"].append(e.text)
             elif e.label_ in ["GPE","LOC"]: ents["LOCATION"].append(e.text)
-
     return ents
 
 # ---------------- AMBIGUITY ----------------
 AMBIGUOUS_WORDS = ["reasonable","as per","may be","उचित","समय समय पर"]
-
 def is_ambiguous(clause):
     return any(w in clause.lower() for w in AMBIGUOUS_WORDS)
 
 # ---------------- RISK ----------------
-HIGH = ["indemnify","penalty","terminate","liability","damages","non-compete","intellectual property"]
-MEDIUM = ["arbitration","jurisdiction","lock-in","auto-renew"]
-LOW = ["payment","notice","confidentiality"]
+HIGH = ["indemnify","penalty","terminate","liability","damages","non-compete","intellectual property",
+        "क्षतिपूर्ति","दंड","समाप्त","उत्तरदायित्व","प्रतिस्पर्धा","बौद्धिक संपदा"]
+MEDIUM = ["arbitration","jurisdiction","lock-in","auto-renew","मध्यस्थता","क्षेत्राधिकार"]
+LOW = ["payment","notice","confidentiality","भुगतान","सूचना","गोपनीयता"]
 
 def risk_score(clause):
     t = clause.lower()
@@ -159,7 +139,7 @@ def obligation_type(clause):
     if "may" in c or "सकता है" in c: return "Right"
     return "Neutral"
 
-# ---------------- LLM FUNCTIONS ----------------
+# ---------------- LLM ----------------
 def llm_summarize(text):
     if not USE_LLM:
         return "LLM disabled. Showing rule-based summary."
@@ -173,7 +153,7 @@ def llm_summarize(text):
 def llm_suggest(clause):
     if not USE_LLM:
         return "Consider renegotiating this clause."
-    prompt = f"Suggest safer alternative for this contract clause:\n{clause}"
+    prompt = f"Suggest safer alternative for this clause:\n{clause}"
     res = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role":"user","content":prompt}]
@@ -191,7 +171,6 @@ def export_pdf(report):
     c.save()
     return file
 
-# ---------------- SESSION STATE ----------------
 if "pdf_path" not in st.session_state:
     st.session_state.pdf_path = None
 
@@ -246,7 +225,6 @@ if uploaded_file:
         st.success("Overall Risk: LOW")
 
     summary = llm_summarize(text)
-
     st.subheader("📝 Summary Report")
     st.write(summary)
 
