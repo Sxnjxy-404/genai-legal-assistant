@@ -282,7 +282,14 @@ Total Clauses: {len(clauses)}
 
     if st.button("Export PDF"):
         pdf = export_pdf(summary)
-        st.success("PDF created: " + pdf)
+        with open(pdf, "rb") as f:
+            st.download_button(
+                label="Download PDF",
+                data=f,
+                file_name="contract_report.pdf",
+                mime="application/pdf"
+                )
+
 
     st.subheader("📄 SME-Friendly Contract Templates")
     temp_choice = st.selectbox("Choose Template", list(TEMPLATES.keys()))
