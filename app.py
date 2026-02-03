@@ -139,20 +139,27 @@ def classify_contract(text):
 
 # ---------------- NER (English only) ----------------
 def extract_entities(text, lang):
-    if lang != "English":
-        return {"NOTE": "NER supported only for English in offline mode"}
-    doc = nlp_en(text)
-    ents = {"PARTY": [], "DATE": [], "MONEY": [], "GPE": []}
-    for e in doc.ents:
-        if e.label_ in ["ORG", "PERSON"]:
-            ents["PARTY"].append(e.text)
-        elif e.label_ == "DATE":
-            ents["DATE"].append(e.text)
-        elif e.label_ == "MONEY":
-            ents["MONEY"].append(e.text)
-        elif e.label_ == "GPE":
-            ents["GPE"].append(e.text)
-    return ents
+    if lang == "Hindi":
+        doc = nlp_hi(text)
+        ents = {"PERSON": [], "ORG": [], "DATE": [], "MONEY": [], "LOCATION": []}
+        for sent in doc.sentences:
+            for ent in sent.ents:
+                if ent.type in ents:
+                    ents[ent.type].append(ent.text)
+        return ents
+    else:
+        doc = nlp_en(text)
+        ents = {"PARTY": [], "DATE": [], "MONEY": [], "GPE": []}
+        for e in doc.ents:
+            if e.label_ in ["ORG", "PERSON"]:
+                ents["PARTY"].append(e.text)
+            elif e.label_ == "DATE":
+                ents["DATE"].append(e.text)
+            elif e.label_ == "MONEY":
+                ents["MONEY"].append(e.text)
+            elif e.label_ == "GPE":
+                ents["GPE"].append(e.text)
+        return ents
 
 # ---------------- RISK KEYWORDS ----------------
 HIGH_EN = ["indemnify", "penalty", "terminate", "non-compete", "liability", "damages"]
