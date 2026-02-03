@@ -9,3 +9,4 @@ nltk
 langdetect
 openai
 stanza
+scikit-learn
